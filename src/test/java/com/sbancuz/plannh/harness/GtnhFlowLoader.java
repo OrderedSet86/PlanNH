@@ -36,7 +36,7 @@ import com.sbancuz.plannh.data.flowchart.Node;
  * so it is surfaced on the {@link LoadedChart} for the solver work to consume.</li>
  * </ul>
  */
-public final class CorpusLoader {
+public final class GtnhFlowLoader {
 
     public record Pin(String kind, int machineIndex, String machineName, String ingredient, double value) {}
 
@@ -64,12 +64,12 @@ public final class CorpusLoader {
         }
     }
 
-    private CorpusLoader() {}
+    private GtnhFlowLoader() {}
 
-    /** Loads {@code /corpus/<name>.yaml} from test resources. */
+    /** Loads {@code /gtnh-flow/<name>.yaml} from test resources. */
     public static LoadedChart load(final String name) {
-        final InputStream in = CorpusLoader.class.getResourceAsStream("/corpus/" + name + ".yaml");
-        Objects.requireNonNull(in, "missing corpus fixture: " + name);
+        final InputStream in = GtnhFlowLoader.class.getResourceAsStream("/gtnh-flow/" + name + ".yaml");
+        Objects.requireNonNull(in, "missing gtnh-flow fixture: " + name);
         final List<Map<String, Object>> raw = new Yaml().load(in);
 
         final Graph graph = new Graph();

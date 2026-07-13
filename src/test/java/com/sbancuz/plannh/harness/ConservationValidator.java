@@ -22,7 +22,7 @@ public final class ConservationValidator {
 
     private ConservationValidator() {}
 
-    public static Map<String, Double> residuals(final CorpusLoader.LoadedChart chart, final BalanceResult result) {
+    public static Map<String, Double> residuals(final GtnhFlowLoader.LoadedChart chart, final BalanceResult result) {
         final Map<String, Double> produced = new LinkedHashMap<>();
         final Map<String, Double> consumed = new LinkedHashMap<>();
 
@@ -64,7 +64,7 @@ public final class ConservationValidator {
         return residuals;
     }
 
-    private static boolean isConnectedOutput(final CorpusLoader.LoadedChart chart, final Node node, final int port) {
+    private static boolean isConnectedOutput(final GtnhFlowLoader.LoadedChart chart, final Node node, final int port) {
         for (final Edge edge : chart.graph()
             .getEdges()) {
             if (edge.sourceNodeId.equals(node.id) && edge.sourceOutputIndex == port) return true;
@@ -72,7 +72,7 @@ public final class ConservationValidator {
         return false;
     }
 
-    private static boolean isConnectedInput(final CorpusLoader.LoadedChart chart, final Node node, final int port) {
+    private static boolean isConnectedInput(final GtnhFlowLoader.LoadedChart chart, final Node node, final int port) {
         for (final Edge edge : chart.graph()
             .getEdges()) {
             if (edge.targetNodeId.equals(node.id) && edge.targetInputIndex == port) return true;

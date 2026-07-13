@@ -6,19 +6,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 
 import com.sbancuz.plannh.data.flowchart.Node;
-import com.sbancuz.plannh.harness.CorpusLoader;
-import com.sbancuz.plannh.harness.CorpusLoader.LoadedChart;
+import com.sbancuz.plannh.harness.GtnhFlowLoader;
+import com.sbancuz.plannh.harness.GtnhFlowLoader.LoadedChart;
 import com.sbancuz.plannh.harness.TestIngredients;
 
 /**
  * The corpus loader must reproduce each chart's structure exactly: machine counts from the
  * flowv2 corpus, pooled ingredients materialized as explicit edges, pins preserved.
  */
-class CorpusLoadTest {
+class GtnhFlowLoadTest {
 
     @Test
     void mk1Structure() {
-        final LoadedChart chart = CorpusLoader.load("mk1");
+        final LoadedChart chart = GtnhFlowLoader.load("mk1");
         assertEquals(
             2,
             chart.machines()
@@ -57,7 +57,7 @@ class CorpusLoadTest {
 
     @Test
     void loopGraphStructure() {
-        final LoadedChart chart = CorpusLoader.load("loopGraph");
+        final LoadedChart chart = GtnhFlowLoader.load("loopGraph");
         assertEquals(
             2,
             chart.machines()
@@ -78,7 +78,7 @@ class CorpusLoadTest {
     void fractionalQuantitiesRoundTrip() {
         // palladium_line contains sub-1 per-craft quantities; the amount/chance encoding must
         // reproduce them exactly enough for ratio math (they are read back as amount * chance).
-        final LoadedChart chart = CorpusLoader.load("palladium_line");
+        final LoadedChart chart = GtnhFlowLoader.load("palladium_line");
         for (final Node node : chart.machines()) {
             node.inputs.forEach(p -> assertTrue(TestIngredients.quantityOf(p) > 0));
             node.outputs.forEach(p -> assertTrue(TestIngredients.quantityOf(p) > 0));
@@ -89,27 +89,27 @@ class CorpusLoadTest {
     void corpusSizes() {
         assertEquals(
             3,
-            CorpusLoader.load("light_fuel")
+            GtnhFlowLoader.load("light_fuel")
                 .machines()
                 .size());
         assertEquals(
             3,
-            CorpusLoader.load("light_fuel_hydrogen_loop")
+            GtnhFlowLoader.load("light_fuel_hydrogen_loop")
                 .machines()
                 .size());
         assertEquals(
             28,
-            CorpusLoader.load("230_platline")
+            GtnhFlowLoader.load("230_platline")
                 .machines()
                 .size());
         assertEquals(
             56,
-            CorpusLoader.load("palladium_line")
+            GtnhFlowLoader.load("palladium_line")
                 .machines()
                 .size());
         assertEquals(
             394,
-            CorpusLoader.load("nanocircuits")
+            GtnhFlowLoader.load("nanocircuits")
                 .machines()
                 .size());
     }
@@ -118,7 +118,7 @@ class CorpusLoadTest {
     void everyChartHasEdges() {
         for (final String name : new String[] { "mk1", "loopGraph", "light_fuel", "light_fuel_hydrogen_loop",
             "230_platline", "palladium_line", "nanocircuits" }) {
-            final LoadedChart chart = CorpusLoader.load(name);
+            final LoadedChart chart = GtnhFlowLoader.load(name);
             assertTrue(
                 chart.graph()
                     .getEdges()
