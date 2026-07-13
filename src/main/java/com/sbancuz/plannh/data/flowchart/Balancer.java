@@ -25,7 +25,12 @@ public final class Balancer {
         /** Output-priority: all production must be shipped, inputs get at least what they need. */
         OUTPUT,
         /** Input-priority: inputs consume exactly their capacity, outputs supply at least what's demanded. */
-        INPUT;
+        INPUT,
+        /**
+         * Lexicographic auto-balance ({@link AutoBalancer}): fractional machine counts, automatic
+         * source/sink placement on connected ports, loops handled natively.
+         */
+        AUTO;
 
         public String displayName() {
             return StatCollector.translateToLocal(
@@ -34,12 +39,41 @@ public final class Balancer {
         }
     }
 
+    private static final org.apache.logging.log4j.Logger LOG = org.apache.logging.log4j.LogManager.getLogger("plannh");
+
     @Nonnull
     public static BalanceResult balance(final Graph graph, final BalanceMode mode, final boolean opsMode) {
         return switch (mode) {
             case NONE -> balanceNone(graph);
             case OUTPUT, INPUT -> solveILPOrFallback(graph, mode, opsMode);
+            case AUTO -> balanceAuto(graph);
         };
+    }
+
+    /**
+     * AUTO mode: the lexicographic solver with fractional machine counts. Unlike the other
+     * modes, it never writes counts back into the node configs (viewing must not mutate the
+     * chart) and it logs its outcome - silent fallback is what made the other modes so hard to
+     * diagnose in-game.
+     */
+    @Nonnull
+    private static BalanceResult balanceAuto(final Graph graph) {
+        final AutoBalancer.Result result = AutoBalancer.solve(graph);
+        if (!result.isSuccess()) {
+            LOG.warn("Auto balance failed ({}); showing configured machine counts instead", result.failure());
+            return balanceNone(graph);
+        }
+        final AutoBalancer.Solution solution = result.solution();
+        for (final String note : solution.notes()) {
+            LOG.info("Auto balance: {}", note);
+        }
+        LOG.info(
+            "Auto balance: {} machines, {} open gates, {}ms",
+            solution.machineCounts()
+                .size(),
+            solution.openGates(),
+            solution.wallMillis());
+        return buildResultFractional(graph, solution.machineCounts());
     }
 
     @Nonnull
@@ -62,13 +96,29 @@ public final class Balancer {
 
     @Nonnull
     static BalanceResult buildResult(final Graph graph, final Map<UUID, Integer> ops) {
+        final Map<UUID, Double> fractional = new HashMap<>(ops.size());
+        for (final Map.Entry<UUID, Integer> entry : ops.entrySet()) {
+            fractional.put(entry.getKey(), (double) entry.getValue());
+        }
+        return buildResultFractional(graph, fractional);
+    }
+
+    /**
+     * Builds the balance result from (possibly fractional) machine counts. Effective rates are
+     * computed from the exact fractional count - the true steady state - while the displayed
+     * operation count is the ceiling (the number of physical machines to place; the fraction is
+     * that machine's duty cycle).
+     */
+    @Nonnull
+    static BalanceResult buildResultFractional(final Graph graph, final Map<UUID, Double> machineCounts) {
         final Map<UUID, NodeBalance> nodeBalances = new HashMap<>();
         final Map<RecipeProperty<?>, Long> propertyTotals = new HashMap<>();
         int totalOps = 0;
         int totalDuration = 0;
 
         for (final Node node : graph.getNodes()) {
-            final int opCount = ops.get(node.id);
+            final double count = machineCounts.get(node.id);
+            final int opCount = (int) Math.ceil(count - 1e-9);
             totalOps += opCount;
 
             final MachineConfig cfg = node.machineConfig;
@@ -77,7 +127,7 @@ public final class Balancer {
             final int durPerOp = eff.durationTicks();
             final int throughputFactor = eff.throughputFactor();
 
-            final long totalEnergy = eutPerOp * durPerOp * opCount;
+            final long totalEnergy = Math.round(eutPerOp * durPerOp * count);
             if (durPerOp > totalDuration) totalDuration = durPerOp;
 
             final Map<Integer, Float> effOuts = new HashMap<>(node.outputs.size());
@@ -85,7 +135,9 @@ public final class Balancer {
                 final var outStack = node.outputs.get(i);
                 final int stackSize = outStack.getAmount();
                 if (stackSize <= 0) continue;
-                final float total = opCount * stackSize * outStack.getChance() * cfg.outputMultiplier(i) * throughputFactor;
+                final float total = (float) (count * stackSize * outStack.getChance()
+                    * cfg.outputMultiplier(i)
+                    * throughputFactor);
                 if (total <= 0) continue;
                 effOuts.put(i, total);
             }
@@ -95,7 +147,9 @@ public final class Balancer {
                 final var inStack = node.inputs.get(i);
                 final int stackSize = inStack.getAmount();
                 if (stackSize <= 0) continue;
-                final float total = opCount * stackSize * inStack.getChance() * cfg.inputMultiplier(i) * throughputFactor;
+                final float total = (float) (count * stackSize * inStack.getChance()
+                    * cfg.inputMultiplier(i)
+                    * throughputFactor);
                 if (total <= 0) continue;
                 effIns.put(i, total);
             }
@@ -104,7 +158,7 @@ public final class Balancer {
 
             for (final Map.Entry<RecipeProperty<?>, Object> entry : node.properties.entrySet()) {
                 if (entry.getValue() instanceof final Number num) {
-                    propertyTotals.merge(entry.getKey(), num.longValue() * opCount, Long::sum);
+                    propertyTotals.merge(entry.getKey(), Math.round(num.longValue() * count), Long::sum);
                 }
             }
         }
