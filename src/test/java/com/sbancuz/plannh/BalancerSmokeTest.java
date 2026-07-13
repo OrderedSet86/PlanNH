@@ -13,8 +13,8 @@ import com.sbancuz.plannh.data.flowchart.Balancer;
 import com.sbancuz.plannh.data.flowchart.Balancer.BalanceMode;
 import com.sbancuz.plannh.data.flowchart.Balancer.BalanceResult;
 import com.sbancuz.plannh.data.flowchart.Node;
-import com.sbancuz.plannh.harness.CorpusLoader;
-import com.sbancuz.plannh.harness.CorpusLoader.LoadedChart;
+import com.sbancuz.plannh.harness.GtnhFlowLoader;
+import com.sbancuz.plannh.harness.GtnhFlowLoader.LoadedChart;
 
 /**
  * Behavior of the CURRENT balancer over the corpus: it must never crash, never exceed the 15s
@@ -31,7 +31,7 @@ class BalancerSmokeTest {
         strings = { "mk1", "loopGraph", "light_fuel", "light_fuel_hydrogen_loop", "230_platline", "palladium_line",
             "nanocircuits" })
     void noneModeUsesConfiguredCounts(final String name) {
-        final LoadedChart chart = CorpusLoader.load(name);
+        final LoadedChart chart = GtnhFlowLoader.load(name);
         final BalanceResult result = Balancer.balance(chart.graph(), BalanceMode.NONE, false);
         assertNotNull(result);
         for (final Node node : chart.machines()) {
@@ -47,7 +47,7 @@ class BalancerSmokeTest {
         strings = { "mk1", "loopGraph", "light_fuel", "light_fuel_hydrogen_loop", "230_platline", "palladium_line",
             "nanocircuits" })
     void outputModeStaysWithinBudget(final String name) {
-        final LoadedChart chart = CorpusLoader.load(name);
+        final LoadedChart chart = GtnhFlowLoader.load(name);
         final BalanceResult result = assertTimeoutPreemptively(
             BUDGET,
             () -> Balancer.balance(chart.graph(), BalanceMode.OUTPUT, false),
