@@ -50,10 +50,17 @@ public final class GtnhFlowLoader {
     private static final int TICKS_PER_SECOND = 20;
 
     static {
-        // Machine profiles are normally registered during mod init; headless tests need the
-        // default profile present before any MachineConfig is constructed. The record is built
-        // directly because MachineProfile.Builder reads NEIClientConfig in its constructor,
-        // which needs a running client.
+        ensureDefaultMachineProfile();
+    }
+
+    /**
+     * Machine profiles are normally registered during mod init; headless tests need the default
+     * profile present before any MachineConfig is constructed. The record is built directly
+     * because MachineProfile.Builder reads NEIClientConfig in its constructor, which needs a
+     * running client. Tests that build {@link Node}s by hand (instead of via {@link #load}) must
+     * call this first.
+     */
+    public static void ensureDefaultMachineProfile() {
         if (MachineProfileRegistry.get(MachineProfileRegistry.defaultId()) == null) {
             MachineProfileRegistry.register(
                 new MachineProfile(
