@@ -213,6 +213,24 @@ class GroundTruthTest {
     }
 
     @Test
+    void noPin_noBalance() {
+        // The gtnh-flow contract: an unpinned chart is just wiring. The model is homogeneous
+        // (every solution scales freely), so instead of inventing an anchor the solver refuses
+        // with a message telling the user how to ask for a balance. mk1's only pin is a target:
+        // pin, which has no in-game runtime yet - so solving it WITHOUT the test's converted
+        // pins is exactly the unpinned case.
+        final LoadedChart chart = GtnhFlowLoader.load("mk1");
+        final Result result = AutoBalancer.solve(chart.graph());
+
+        assertTrue(!result.isSuccess(), "unpinned chart must not be balanced");
+        assertEquals(AutoBalancer.NO_PIN, result.failure());
+        assertTrue(
+            AutoBalancer.enumerateAlternatives(chart.graph(), Map.of())
+                .isEmpty(),
+            "no alternatives either");
+    }
+
+    @Test
     void wellWiredCharts_produceNoMissingEdgeNotes() {
         // The diagnostic must not cry wolf: fully wired charts (including ones with legitimate
         // gated sources like loopGraph and legitimate terminal imports like light_fuel's oil)

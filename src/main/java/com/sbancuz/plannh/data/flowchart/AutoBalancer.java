@@ -20,9 +20,10 @@ import com.sbancuz.plannh.data.MachineConfig;
 
 /**
  * Four-stage lexicographic MILP balancer (the flowv2 research formulation, ported to PlanNH's
- * machine-node graphs in recipe-extent form). Zero configuration: the chart plus at most one
- * pinned machine count is the entire input; externals (sources/sinks) are placed automatically
- * and reported, never demanded from the user.
+ * machine-node graphs in recipe-extent form). The chart plus its pins is the entire input:
+ * no pin means no balancing (an unpinned chart is just wiring - {@link #NO_PIN}); one or more
+ * pins anchor the scale and everything else - including where external sources/sinks go - is
+ * decided automatically, never demanded from the user.
  *
  * <p>
  * Model: one extent variable per machine (crafts/second), one flow variable per drawn edge
@@ -85,6 +86,13 @@ public final class AutoBalancer {
 
     private AutoBalancer() {}
 
+    /**
+     * The failure reason when no machine is pinned. Not an error: an unpinned chart is just
+     * wiring (the gtnh-flow contract) - the model is homogeneous and every solution scales
+     * freely, so any numbers would be an invented anchor the user never asked for.
+     */
+    public static final String NO_PIN = "nothing is pinned - fix a machine count to ask for a balance";
+
     /** A port on a specific machine. {@code input} distinguishes the two port lists. */
     public record PortRef(UUID nodeId, int portIndex, boolean input) {}
 
@@ -126,6 +134,9 @@ public final class AutoBalancer {
         if (ctx.machines.isEmpty()) {
             return Result.fail("empty graph");
         }
+        if (!ctx.anyPin) {
+            return Result.fail(NO_PIN);
+        }
 
         // Pass 1: floor-free.
         Attempt attempt = runStages(ctx, null);
@@ -161,7 +172,7 @@ public final class AutoBalancer {
      */
     public static List<Set<PortRef>> enumerateAlternatives(final Graph graph, final Map<UUID, Double> extraExtentPins) {
         final Ctx ctx = new Ctx(graph, extraExtentPins);
-        if (ctx.machines.isEmpty()) return List.of();
+        if (ctx.machines.isEmpty() || !ctx.anyPin) return List.of();
 
         final Attempt base = runStages(ctx, null);
         if (base.failure != null) return List.of();
@@ -522,6 +533,7 @@ public final class AutoBalancer {
         final List<Gate> gates = new ArrayList<>();
         int[] portGate; // connected port index -> gate index
         int[] portComponent; // connected port index -> ingredient component root
+        boolean anyPin;
         final List<String> notes = new ArrayList<>();
 
         Ctx(final Graph graph, final Map<UUID, Double> extraExtentPins) {
@@ -608,7 +620,6 @@ public final class AutoBalancer {
          * with the largest configured count.
          */
         private void applyPins(final Map<UUID, Double> extraExtentPins) {
-            boolean anyPin = false;
             for (final MachineData m : machines) {
                 final Double extra = extraExtentPins.get(m.node.id);
                 if (extra != null) {
@@ -618,20 +629,6 @@ public final class AutoBalancer {
                     m.pinnedExtent = extentOf(m, m.node.machineConfig.getMachineCount());
                     anyPin = true;
                 }
-            }
-            if (!anyPin && !machines.isEmpty()) {
-                MachineData anchor = machines.get(0);
-                for (final MachineData m : machines) {
-                    if (m.node.machineConfig.getMachineCount() > anchor.node.machineConfig.getMachineCount()) {
-                        anchor = m;
-                    }
-                }
-                final int count = Math.max(1, anchor.node.machineConfig.getMachineCount());
-                anchor.pinnedExtent = extentOf(anchor, count);
-                notes.add(
-                    "no pinned machine; anchored scale on '" + anchor.node.machineName
-                        + "' at its configured count of "
-                        + count);
             }
         }
 

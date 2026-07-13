@@ -60,7 +60,13 @@ public final class Balancer {
     private static BalanceResult balanceAuto(final Graph graph) {
         final AutoBalancer.Result result = AutoBalancer.solve(graph);
         if (!result.isSuccess()) {
-            LOG.warn("Auto balance failed ({}); showing configured machine counts instead", result.failure());
+            if (AutoBalancer.NO_PIN.equals(result.failure())) {
+                // Expected state, not an error: an unpinned chart is just wiring. Configured
+                // counts are shown as-is until the user fixes a machine count.
+                LOG.info("Auto balance idle: {}", result.failure());
+            } else {
+                LOG.warn("Auto balance failed ({}); showing configured machine counts instead", result.failure());
+            }
             return balanceNone(graph);
         }
         final AutoBalancer.Solution solution = result.solution();
