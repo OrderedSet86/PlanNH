@@ -14,3 +14,11 @@ tasks.matching { it.name == 'shadowJar' }.configureEach {
 configurations.matching { it.name.toLowerCase(Locale.ROOT).contains('shadow') }.configureEach {
     resolutionStrategy.force('com.google.guava:guava:30.1-jre')
 }
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'short'
+    }
+}
