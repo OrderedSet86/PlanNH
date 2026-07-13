@@ -104,22 +104,22 @@ public final class Balancer {
     }
 
     /**
-     * Builds the balance result from (possibly fractional) machine counts. Effective rates are
-     * computed from the exact fractional count - the true steady state - while the displayed
-     * operation count is the ceiling (the number of physical machines to place; the fraction is
-     * that machine's duty cycle).
+     * Builds the balance result from (possibly fractional) machine counts. Everything - the
+     * displayed count, the effective rates, the totals - derives from the exact fractional
+     * count, so every displayed number is auditable against every other. A fractional count
+     * reads as that machine's duty cycle; rounding up for physical placement is the reader's
+     * one-step mental operation, not something the math does behind their back.
      */
     @Nonnull
     static BalanceResult buildResultFractional(final Graph graph, final Map<UUID, Double> machineCounts) {
         final Map<UUID, NodeBalance> nodeBalances = new HashMap<>();
         final Map<RecipeProperty<?>, Long> propertyTotals = new HashMap<>();
-        int totalOps = 0;
+        double totalOps = 0;
         int totalDuration = 0;
 
         for (final Node node : graph.getNodes()) {
             final double count = machineCounts.get(node.id);
-            final int opCount = (int) Math.ceil(count - 1e-9);
-            totalOps += opCount;
+            totalOps += count;
 
             final MachineConfig cfg = node.machineConfig;
             final var eff = cfg.computeEffect(node.properties, node.durationTicks);
@@ -154,7 +154,7 @@ public final class Balancer {
                 effIns.put(i, total);
             }
 
-            nodeBalances.put(node.id, new NodeBalance(opCount, durPerOp, totalEnergy, durPerOp, effOuts, effIns));
+            nodeBalances.put(node.id, new NodeBalance(count, durPerOp, totalEnergy, durPerOp, effOuts, effIns));
 
             for (final Map.Entry<RecipeProperty<?>, Object> entry : node.properties.entrySet()) {
                 if (entry.getValue() instanceof final Number num) {
@@ -166,11 +166,11 @@ public final class Balancer {
         return new BalanceResult(nodeBalances, propertyTotals, totalOps, totalDuration);
     }
 
-    public record NodeBalance(int operations, int totalDurationTicks, long totalEnergy, int durationPerOp,
+    public record NodeBalance(double operations, int totalDurationTicks, long totalEnergy, int durationPerOp,
         Map<Integer, Float> effectiveOutputs, Map<Integer, Float> effectiveInputs) {}
 
     public record BalanceResult(Map<UUID, NodeBalance> nodeBalances, Map<RecipeProperty<?>, Long> propertyTotals,
-        int totalOperations, int totalDurationTicks) {}
+        double totalOperations, int totalDurationTicks) {}
 
     /**
      * Solves the optimal machine counts via a continuous LP relaxation, then rounds each

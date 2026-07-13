@@ -521,6 +521,7 @@ public final class AutoBalancer {
         final Map<Long, Integer> portLookup = new HashMap<>(); // (machine, port, input) -> index
         final List<Gate> gates = new ArrayList<>();
         int[] portGate; // connected port index -> gate index
+        int[] portComponent; // connected port index -> ingredient component root
         final List<String> notes = new ArrayList<>();
 
         Ctx(final Graph graph, final Map<UUID, Double> extraExtentPins) {
@@ -568,11 +569,13 @@ public final class AutoBalancer {
                 union(root, e.srcPort(), e.dstPort());
             }
             portGate = new int[n];
+            portComponent = new int[n];
             final Map<Long, Integer> gateLookup = new HashMap<>();
             for (int p = 0; p < n; p++) {
                 final boolean input = connectedPorts.get(p)
                     .input();
-                final long key = ((long) find(root, p) << 1) | (input ? 1 : 0);
+                portComponent[p] = find(root, p);
+                final long key = ((long) portComponent[p] << 1) | (input ? 1 : 0);
                 Integer gate = gateLookup.get(key);
                 if (gate == null) {
                     gates.add(new Gate(input, new ArrayList<>()));
@@ -844,6 +847,7 @@ public final class AutoBalancer {
 
             final List<String> allNotes = new ArrayList<>(notes);
             allNotes.addAll(attempt.notes);
+            allNotes.addAll(wiringDiagnostics(attempt, terminalIn));
 
             return new Solution(
                 extents,
@@ -859,6 +863,102 @@ public final class AutoBalancer {
                 floorsUsed,
                 wallMillis,
                 List.copyOf(allNotes));
+        }
+
+        /**
+         * Flags externals that look like missing edges rather than intent. The free-terminal
+         * rule means an unwired input silently becomes "supplied from outside" - correct for
+         * oil, wrong when the same ingredient is right there on the chart. Two smells: (1) a
+         * terminal input whose ingredient the chart also produces (through drawn edges or
+         * another terminal); (2) a gated source whose ingredient is produced in a DIFFERENT
+         * edge-connected component (two unlinked islands of the same fluid). Same-component
+         * gated sources are the normal deficit case (e.g. the loopGraph source) and stay quiet.
+         */
+        private List<String> wiringDiagnostics(final Attempt attempt, final List<External> terminalIn) {
+            final List<String> result = new ArrayList<>();
+            for (final External in : terminalIn) {
+                final String match = findProduction(in, -1);
+                if (match != null) {
+                    result.add(
+                        "'" + machineNameOf(in)
+                            + "' imports "
+                            + portNameOf(in)
+                            + " externally, but the chart also produces it at '"
+                            + match
+                            + "' - missing an edge?");
+                }
+            }
+            for (int p = 0; p < connectedPorts.size(); p++) {
+                final ConnectedPort port = connectedPorts.get(p);
+                if (!port.input() || attempt.externals[p] <= ZERO) continue;
+                final External src = new External(
+                    new PortRef(machines.get(port.machine()).node.id, port.portIndex(), port.input()),
+                    attempt.externals[p]);
+                final String match = findProduction(src, portComponent[p]);
+                if (match != null) {
+                    result.add(
+                        "'" + machineNameOf(src)
+                            + "' sources "
+                            + portNameOf(src)
+                            + " externally, but an unlinked part of the chart produces it at '"
+                            + match
+                            + "' - missing an edge?");
+                }
+            }
+            return result;
+        }
+
+        /**
+         * A machine name producing the same ingredient as {@code consumer}'s port, or null.
+         * Checks terminal outputs and connected output ports; {@code excludeComponent} skips the
+         * consumer's own component (-1 checks everything).
+         */
+        private String findProduction(final External consumer, final int excludeComponent) {
+            final Port<?> want = portOf(consumer);
+            for (int p = 0; p < connectedPorts.size(); p++) {
+                final ConnectedPort port = connectedPorts.get(p);
+                if (port.input() || portComponent[p] == excludeComponent) continue;
+                final MachineData m = machines.get(port.machine());
+                if (want.canConnect(m.node.outputs.get(port.portIndex()))) {
+                    return m.node.machineName;
+                }
+            }
+            for (int m = 0; m < machines.size(); m++) {
+                final MachineData md = machines.get(m);
+                for (int i = 0; i < md.outQty.length; i++) {
+                    if (md.outQty[i] <= 0) continue;
+                    final long key = ((long) m << 32) | ((long) i << 1);
+                    if (portLookup.containsKey(key)) continue; // connected, handled above
+                    if (want.canConnect(md.node.outputs.get(i))) {
+                        return md.node.machineName;
+                    }
+                }
+            }
+            return null;
+        }
+
+        private Port<?> portOf(final External e) {
+            final Node node = machines.get(
+                machineIndex.get(
+                    e.port()
+                        .nodeId())).node;
+            return (e.port()
+                .input() ? node.inputs : node.outputs).get(
+                    e.port()
+                        .portIndex());
+        }
+
+        private String machineNameOf(final External e) {
+            return machines.get(
+                machineIndex.get(
+                    e.port()
+                        .nodeId())).node.machineName;
+        }
+
+        private String portNameOf(final External e) {
+            return (e.port()
+                .input() ? "input " : "output ") + e.port()
+                    .portIndex();
         }
 
         private void collectTerminals(final int m, final MachineData md, final int portCount, final boolean input,

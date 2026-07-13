@@ -172,6 +172,64 @@ class GroundTruthTest {
     }
 
     @Test
+    void mk1Tiberium_unwiredFusionHeavy_solvesAsDrawn_butFlagsTheMissingEdge() {
+        // The in-game state from the 2026-07-13 AUTO-mode screenshots: the fusion reactor's
+        // heavy input was never wired to the DT, only the bath's was. As drawn, the chart is
+        // balanceable gate-free: the bath scales to 2.167 machines eating ALL of the DT's 15.6/s
+        // heavy, and the fusion reactor's heavy arrives through its free terminal (the summary's
+        // "14 mB/s heavy naquadah external input"). That answer is CORRECT for the drawn graph -
+        // but it is almost certainly a missing edge, so the solver must say so in its notes.
+        final LoadedChart chart = GtnhFlowLoader.load("mk1_tiberium");
+        final Node fusion = chart.machine(0);
+        final List<UUID> fusionHeavyEdges = chart.graph()
+            .getEdges()
+            .stream()
+            .filter(e -> e.targetNodeId.equals(fusion.id) && e.targetInputIndex == 0)
+            .map(e -> e.id)
+            .toList();
+        assertEquals(1, fusionHeavyEdges.size(), "precondition: the loader wired DT heavy -> fusion");
+        chart.graph()
+            .removeEdge(fusionHeavyEdges.get(0));
+
+        final Solution s = solve(chart);
+
+        assertEquals(0, s.openGates(), "gate-free as drawn: the bath absorbs all routed heavy");
+        assertEquals(
+            13.0 / 6.0,
+            s.machineCounts()
+                .get(chart.machine(2).id),
+            EPS,
+            "bath scales to 2.167 machines");
+        assertEquals(
+            14.4,
+            terminalRate(chart, s.terminalInputs(), "heavy naquadah fuel"),
+            EPS,
+            "fusion's heavy arrives via its free terminal");
+        assertTrue(
+            s.notes()
+                .stream()
+                .anyMatch(n -> n.contains("missing an edge")),
+            "the missing-edge diagnostic must fire, got notes: " + s.notes());
+    }
+
+    @Test
+    void wellWiredCharts_produceNoMissingEdgeNotes() {
+        // The diagnostic must not cry wolf: fully wired charts (including ones with legitimate
+        // gated sources like loopGraph and legitimate terminal imports like light_fuel's oil)
+        // stay silent.
+        for (final String name : new String[] { "loopGraph", "light_fuel", "light_fuel_hydrogen_loop", "mk1",
+            "mk1_tiberium" }) {
+            final LoadedChart chart = GtnhFlowLoader.load(name);
+            final Solution s = solve(chart);
+            assertTrue(
+                s.notes()
+                    .stream()
+                    .noneMatch(n -> n.contains("missing an edge")),
+                name + " should have no wiring notes, got: " + s.notes());
+        }
+    }
+
+    @Test
     void palladiumLine_atMostElevenGates_allMachinesRun_withinBudget() {
         // 56 machines. All must run (stage 0 floors). flowv2's HiGHS answer was 11 gated
         // externals, matching the historical hand-picked whitelist - but research.md itself

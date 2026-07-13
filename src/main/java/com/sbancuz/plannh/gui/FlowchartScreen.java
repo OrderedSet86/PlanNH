@@ -506,7 +506,7 @@ public class FlowchartScreen extends ModularScreen {
                         .get(node.id);
                     if (nb == null || nb.operations() <= 0) continue;
                     GuiDraw.drawText(
-                        "\u00d7" + nb.operations() + "  " + node.machineName,
+                        "\u00d7" + GuiHelper.formatCount(nb.operations()) + "  " + node.machineName,
                         ITEM_TEXT_X,
                         ly,
                         0.8f,
@@ -520,7 +520,7 @@ public class FlowchartScreen extends ModularScreen {
             if (br.totalOperations() > 0 || br.totalDurationTicks() > 0) {
                 final StringBuilder totals = new StringBuilder();
                 if (br.totalOperations() > 0) totals.append("Ops: ")
-                    .append(br.totalOperations());
+                    .append(GuiHelper.formatCount(br.totalOperations()));
                 if (br.totalDurationTicks() > 0) {
                     final float sec = (float) br.totalDurationTicks() / GuiHelper.TICKS_PER_SECOND;
                     if (!totals.isEmpty()) totals.append("  ");

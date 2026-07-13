@@ -1,5 +1,6 @@
 package com.sbancuz.plannh;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -68,11 +69,12 @@ class BalancerSmokeTest {
 
     /**
      * Unlike OUTPUT/INPUT, AUTO must never write solved counts back into the node configs:
-     * viewing a chart is not editing it. The fractional solution lives in the balance result's
-     * effective rates; the configured counts stay the user's.
+     * viewing a chart is not editing it. And the reported operation count is the exact
+     * fractional machine count - no rounding anywhere, so every displayed number can be checked
+     * against every other by hand (integer ceilings made solutions unauditable in-game).
      */
     @org.junit.jupiter.api.Test
-    void autoModeDoesNotWriteBackMachineCounts() {
+    void autoModeReportsExactFractionalCounts_andDoesNotWriteThemBack() {
         final LoadedChart chart = GtnhFlowLoader.load("loopGraph");
         final Node lcr = chart.machine(1);
         assertTrue(!lcr.isMachineCountFixed());
@@ -81,12 +83,13 @@ class BalancerSmokeTest {
         final BalanceResult result = Balancer.balance(chart.graph(), BalanceMode.AUTO, false);
 
         assertTrue(lcr.machineConfig.getMachineCount() == 3, "configured count must survive viewing");
-        // The solved LCR count is 8/15 (0.533); the displayed operation count is its ceiling.
-        assertTrue(
+        assertEquals(
+            8.0 / 15.0,
             result.nodeBalances()
                 .get(lcr.id)
-                .operations() == 1,
-            "ceil(0.533) machines displayed");
+                .operations(),
+            1e-6,
+            "the exact fractional machine count, not a ceiling");
     }
 
     @ParameterizedTest
@@ -101,7 +104,7 @@ class BalancerSmokeTest {
             name + " exceeded the 15s solve budget");
         assertNotNull(result);
         for (final Node node : chart.machines()) {
-            final int ops = result.nodeBalances()
+            final double ops = result.nodeBalances()
                 .get(node.id)
                 .operations();
             assertTrue(ops >= 1, node.machineName + " solved to " + ops + " machines");
