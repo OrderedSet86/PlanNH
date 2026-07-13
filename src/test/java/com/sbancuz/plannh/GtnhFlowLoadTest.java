@@ -86,7 +86,7 @@ class GtnhFlowLoadTest {
     }
 
     @Test
-    void corpusSizes() {
+    void chartSizes() {
         assertEquals(
             3,
             GtnhFlowLoader.load("light_fuel")
