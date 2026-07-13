@@ -357,6 +357,7 @@ public class FlowchartScreen extends ModularScreen {
         private static final int ZOOM_TEXT_X = 6;
         private static final int ZOOM_LINE_H = 14;
         private static final int HELP_LINE_H = 10;
+        private static final float NOTE_SCALE = 0.8f;
 
         private final CanvasWidget canvas;
 
@@ -417,9 +418,26 @@ public class FlowchartScreen extends ModularScreen {
             if (br.totalDurationTicks() > 0) {
                 h += SECTION_H;
             }
+            if (!br.notes()
+                .isEmpty()) {
+                h += SECTION_H + wrapNotes(br.notes()).size() * LINE_H + SECTION_END_PAD;
+            }
             h += SECTION_LY_OFFSET + TOTALS_LINE_H + 1 + HELP_LINE_H;
             h += MODE_LINE_H + HELP_LINE_H * 5;
             return h;
+        }
+
+        /** Solver notes, word-wrapped to the summary width at the item text scale. */
+        private static List<String> wrapNotes(final List<String> notes) {
+            final List<String> lines = new java.util.ArrayList<>();
+            final int wrapWidth = (int) ((WIDTH - ITEM_TEXT_X - 4) / NOTE_SCALE);
+            for (final String note : notes) {
+                for (final Object line : Minecraft.getMinecraft().fontRenderer
+                    .listFormattedStringToWidth("- " + note, wrapWidth)) {
+                    lines.add((String) line);
+                }
+            }
+            return lines;
         }
 
         @Override
@@ -549,6 +567,29 @@ public class FlowchartScreen extends ModularScreen {
                 String.format(mode.displayName(), g.isOpsMode() ? ", ops" : ""));
             GuiDraw.drawText(modeStr, MODE_TEXT_X, ly, 0.9f, PlannhColors.ACCENT_BLUE.getColor(), false);
             ly += MODE_LINE_H;
+
+            if (!br.notes()
+                .isEmpty()) {
+                GuiDraw.drawRect(
+                    SECTION_HEADER_X,
+                    ly,
+                    w - SECTION_HEADER_X * 2,
+                    SECTION_H,
+                    PlannhColors.SECTION_OPS.getColor());
+                GuiDraw.drawText(
+                    "Notes",
+                    SECTION_HEADER_TEXT_X,
+                    ly + SECTION_HEADER_TEXT_Y_OFF,
+                    1.0f,
+                    PlannhColors.ACCENT_AMBER.getColor(),
+                    false);
+                ly += SECTION_H;
+                for (final String line : wrapNotes(br.notes())) {
+                    GuiDraw.drawText(line, ITEM_TEXT_X, ly, NOTE_SCALE, PlannhColors.ACCENT_AMBER.getColor(), false);
+                    ly += LINE_H;
+                }
+                ly += SECTION_END_PAD;
+            }
 
             GuiDraw.drawRect(
                 SECTION_HEADER_X,

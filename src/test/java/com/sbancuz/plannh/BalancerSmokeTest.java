@@ -92,6 +92,64 @@ class BalancerSmokeTest {
             "the exact fractional machine count, not a ceiling");
     }
 
+    /**
+     * The gtnh-flow contract at the Balancer level: an unpinned chart in AUTO mode shows NO
+     * quantities - zero counts, empty effective rates (so no throughput rows and an empty
+     * summary), and a note telling the user how to ask for a balance. mk1's only pin is a
+     * target: pin with no runtime equivalent, so loading it gives an unpinned graph.
+     */
+    @org.junit.jupiter.api.Test
+    void autoModeUnpinned_showsNoQuantities() {
+        final LoadedChart chart = GtnhFlowLoader.load("mk1");
+
+        final BalanceResult result = Balancer.balance(chart.graph(), BalanceMode.AUTO, false);
+
+        assertEquals(0.0, result.totalOperations(), 1e-9);
+        for (final Node node : chart.machines()) {
+            final var nb = result.nodeBalances()
+                .get(node.id);
+            assertEquals(0.0, nb.operations(), 1e-9, node.machineName + " must show no count");
+            assertTrue(
+                nb.effectiveOutputs()
+                    .isEmpty()
+                    && nb.effectiveInputs()
+                        .isEmpty(),
+                node.machineName + " must show no rates");
+        }
+        assertTrue(
+            result.notes()
+                .stream()
+                .anyMatch(n -> n.contains("pin")),
+            "the summary must say how to ask for a balance, got: " + result.notes());
+    }
+
+    /**
+     * Solver notes must reach the BalanceResult (and from there the summary widget): the
+     * missing-edge diagnostic was useless while it only went to the log.
+     */
+    @org.junit.jupiter.api.Test
+    void autoModeSurfacesMissingEdgeNotes() {
+        final LoadedChart chart = GtnhFlowLoader.load("mk1_tiberium");
+        final Node fusion = chart.machine(0);
+        chart.graph()
+            .getEdges()
+            .stream()
+            .filter(e -> e.targetNodeId.equals(fusion.id) && e.targetInputIndex == 0)
+            .map(e -> e.id)
+            .toList()
+            .forEach(
+                id -> chart.graph()
+                    .removeEdge(id));
+
+        final BalanceResult result = Balancer.balance(chart.graph(), BalanceMode.AUTO, false);
+
+        assertTrue(
+            result.notes()
+                .stream()
+                .anyMatch(n -> n.contains("missing an edge")),
+            "the wiring diagnostic must reach the summary, got: " + result.notes());
+    }
+
     @ParameterizedTest
     @ValueSource(
         strings = { "mk1", "loopGraph", "light_fuel", "light_fuel_hydrogen_loop", "230_platline", "palladium_line",

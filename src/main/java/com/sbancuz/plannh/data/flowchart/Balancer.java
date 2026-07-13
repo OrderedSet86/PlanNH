@@ -61,13 +61,14 @@ public final class Balancer {
         final AutoBalancer.Result result = AutoBalancer.solve(graph);
         if (!result.isSuccess()) {
             if (AutoBalancer.NO_PIN.equals(result.failure())) {
-                // Expected state, not an error: an unpinned chart is just wiring. Configured
-                // counts are shown as-is until the user fixes a machine count.
+                // Expected state, not an error: an unpinned chart is just wiring, so it gets NO
+                // quantities at all - showing numbers derived from an anchor the user never set
+                // is what made earlier solutions untraceable.
                 LOG.info("Auto balance idle: {}", result.failure());
-            } else {
-                LOG.warn("Auto balance failed ({}); showing configured machine counts instead", result.failure());
+                return unbalanced(graph, result.failure());
             }
-            return balanceNone(graph);
+            LOG.warn("Auto balance failed ({}); showing the chart without quantities", result.failure());
+            return unbalanced(graph, "balance failed: " + result.failure());
         }
         final AutoBalancer.Solution solution = result.solution();
         for (final String note : solution.notes()) {
@@ -79,7 +80,19 @@ public final class Balancer {
                 .size(),
             solution.openGates(),
             solution.wallMillis());
-        return buildResultFractional(graph, solution.machineCounts());
+        return buildResultFractional(graph, solution.machineCounts(), solution.notes());
+    }
+
+    /** A quantity-free result: recipes and durations only, plus the reason as a summary note. */
+    @Nonnull
+    private static BalanceResult unbalanced(final Graph graph, final String note) {
+        final Map<UUID, NodeBalance> nodeBalances = new HashMap<>();
+        for (final Node node : graph.getNodes()) {
+            final var eff = node.machineConfig.computeEffect(node.properties, node.durationTicks);
+            final int durPerOp = eff.durationTicks();
+            nodeBalances.put(node.id, new NodeBalance(0, durPerOp, 0, durPerOp, Map.of(), Map.of()));
+        }
+        return new BalanceResult(nodeBalances, Map.of(), 0, 0, List.of(note));
     }
 
     @Nonnull
@@ -106,7 +119,7 @@ public final class Balancer {
         for (final Map.Entry<UUID, Integer> entry : ops.entrySet()) {
             fractional.put(entry.getKey(), (double) entry.getValue());
         }
-        return buildResultFractional(graph, fractional);
+        return buildResultFractional(graph, fractional, List.of());
     }
 
     /**
@@ -117,7 +130,8 @@ public final class Balancer {
      * one-step mental operation, not something the math does behind their back.
      */
     @Nonnull
-    static BalanceResult buildResultFractional(final Graph graph, final Map<UUID, Double> machineCounts) {
+    static BalanceResult buildResultFractional(final Graph graph, final Map<UUID, Double> machineCounts,
+        final List<String> notes) {
         final Map<UUID, NodeBalance> nodeBalances = new HashMap<>();
         final Map<RecipeProperty<?>, Long> propertyTotals = new HashMap<>();
         double totalOps = 0;
@@ -169,14 +183,15 @@ public final class Balancer {
             }
         }
 
-        return new BalanceResult(nodeBalances, propertyTotals, totalOps, totalDuration);
+        return new BalanceResult(nodeBalances, propertyTotals, totalOps, totalDuration, notes);
     }
 
     public record NodeBalance(double operations, int totalDurationTicks, long totalEnergy, int durationPerOp,
         Map<Integer, Float> effectiveOutputs, Map<Integer, Float> effectiveInputs) {}
 
+    /** {@code notes}: solver messages worth the user's eyes (e.g. "missing an edge?"). */
     public record BalanceResult(Map<UUID, NodeBalance> nodeBalances, Map<RecipeProperty<?>, Long> propertyTotals,
-        double totalOperations, int totalDurationTicks) {}
+        double totalOperations, int totalDurationTicks, List<String> notes) {}
 
     /**
      * Solves the optimal machine counts via a continuous LP relaxation, then rounds each

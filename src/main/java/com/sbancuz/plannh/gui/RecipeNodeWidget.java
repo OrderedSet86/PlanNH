@@ -324,11 +324,14 @@ public class RecipeNodeWidget extends Widget<RecipeNodeWidget> implements Intera
             final double simpleOps = simpleNb != null ? simpleNb.operations() : 1;
             final int simpleDurPerOp = simpleNb != null ? simpleNb.durationPerOp() : node.durationTicks;
             final StringBuilder simpleTiming = new StringBuilder();
-            simpleTiming.append("\u00d7")
-                .append(GuiHelper.formatCount(simpleOps));
+            // No balance (unpinned Auto): the chart is just wiring, so no count is shown.
+            if (simpleOps > 0) {
+                simpleTiming.append("\u00d7")
+                    .append(GuiHelper.formatCount(simpleOps));
+            }
             if (simpleDurPerOp > 0) {
-                simpleTiming.append("  ")
-                    .append(simpleDurPerOp)
+                if (!simpleTiming.isEmpty()) simpleTiming.append("  ");
+                simpleTiming.append(simpleDurPerOp)
                     .append("t (")
                     .append(String.format("%.1f", (float) simpleDurPerOp / GuiHelper.TICKS_PER_SECOND))
                     .append("s)");
@@ -441,17 +444,23 @@ public class RecipeNodeWidget extends Widget<RecipeNodeWidget> implements Intera
 
         final int durPerOp = nb != null ? nb.durationPerOp() : node.durationTicks;
         final StringBuilder opsLine = new StringBuilder();
-        opsLine.append("\u00d7")
-            .append(GuiHelper.formatCount(ops));
+        // No balance (unpinned Auto): show the recipe duration only - no count, and below, no
+        // throughput rows. An unpinned chart is wiring, not a solved plan; per-machine rates
+        // would be numbers with no anchor.
+        if (ops > 0) {
+            opsLine.append("\u00d7")
+                .append(GuiHelper.formatCount(ops));
+        }
         if (durPerOp > 0) {
-            opsLine.append("  ")
-                .append(durPerOp)
+            if (!opsLine.isEmpty()) opsLine.append("  ");
+            opsLine.append(durPerOp)
                 .append("t (")
                 .append(String.format("%.2f", (float) durPerOp / GuiHelper.TICKS_PER_SECOND))
                 .append("s)");
         }
         GuiDraw.drawText(opsLine.toString(), x, y, 1.0f, PlannhColors.ACCENT_BLUE.getColor(), false);
         y += LINE_H;
+        if (ops <= 0) return;
 
         y = drawPortList(x, y, node.inputs, nb, sec, false);
         drawPortList(x, y, node.outputs, nb, sec, true);
