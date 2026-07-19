@@ -1,0 +1,9 @@
+{
+  "__comment": "With the GTNH buildscript, `usesMixins = true` + `mixinsPackage = mixins.late` in gradle.properties generates this file and pulls in UniMixins — prefer that. Manual fallback below. The `mixins` array stays empty: the late loader supplies the list dynamically.",
+  "required": true,
+  "minVersion": "0.8.5",
+  "package": "com.sbancuz.plannh.mixins.late",
+  "compatibilityLevel": "JAVA_8",
+  "target": "@env(DEFAULT)",
+  "mixins": []
+}
