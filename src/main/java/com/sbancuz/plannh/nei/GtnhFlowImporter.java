@@ -75,7 +75,8 @@ public final class GtnhFlowImporter {
         }
         final Map<String, FluidStack> fluidIndex = buildFluidIndex();
 
-        final List<String> problems = new ArrayList<>();
+        // problem class -> deduped details, in first-seen order; rendered one line per class
+        final Map<String, List<String>> problems = new LinkedHashMap<>();
         final List<Matched> matched = new ArrayList<>();
         // YAML ingredient name -> producing/consuming (matched index, port index)
         final Map<String, List<int[]>> producers = new LinkedHashMap<>();
@@ -87,7 +88,7 @@ public final class GtnhFlowImporter {
             if (!(o instanceof final Map<?, ?> entry) || entry.get("m") == null) continue;
             final String machine = String.valueOf(entry.get("m"));
             if (machine.startsWith("[")) {
-                problems.add("skipped pseudo-machine \"" + machine + "\" (external supply/sink)");
+                problem(problems, "Skipped source/sink pseudo-machines", machine);
                 continue;
             }
             final Map<String, Double> ins = ioMap(entry.get("I"));
@@ -95,7 +96,7 @@ public final class GtnhFlowImporter {
 
             final Matched m = matchRecipe(machine, ins, outs, entry, itemIndex, fluidIndex);
             if (m == null) {
-                problems.add("#" + entryIndex + " " + machine + " -> " + String.join(", ", outs.keySet()));
+                problem(problems, "No recipe matched", "#" + entryIndex + " " + machine);
                 continue;
             }
 
@@ -143,21 +144,28 @@ public final class GtnhFlowImporter {
             final Note note = new Note();
             note.setHeader("gtnh-flow import");
             final List<String> lines = new ArrayList<>();
-            lines.add("Unmatched or unapplied:");
-            lines.addAll(problems);
+            for (final Map.Entry<String, List<String>> e : problems.entrySet()) {
+                lines.add(e.getKey() + " (" + e.getValue().size() + "): " + String.join(", ", e.getValue()));
+                PlanNH.LOG.info("gtnh-flow import: {}: {}", e.getKey(), String.join(", ", e.getValue()));
+            }
             note.setText(lines);
             note.setX(ORIGIN);
             note.setY(ORIGIN - 2 * ROW_H);
             graph.notes.put(note.getId(), note);
-            for (final String p : problems) PlanNH.LOG.info("gtnh-flow import: {}", p);
         }
         PlanNH.LOG.info(
-            "gtnh-flow import: {} machines, {} edges, {} problems",
+            "gtnh-flow import: {} machines, {} edges, {} problem classes",
             matched.size(),
             graph.getEdges()
                 .size(),
             problems.size());
         return graph;
+    }
+
+    /** Files a detail under a problem class, deduplicated (many machines share one cause). */
+    private static void problem(final Map<String, List<String>> problems, final String category, final String detail) {
+        final List<String> list = problems.computeIfAbsent(category, k -> new ArrayList<>());
+        if (!list.contains(detail)) list.add(detail);
     }
 
     // ── Recipe matching ──
@@ -245,14 +253,14 @@ public final class GtnhFlowImporter {
 
     // ── Config from YAML ──
 
-    private static void applyConfig(final Node node, final Map<?, ?> entry, final List<String> problems) {
+    private static void applyConfig(final Node node, final Map<?, ?> entry, final Map<String, List<String>> problems) {
         final Object tier = entry.get("tier");
         if (tier != null) {
             final String option = voltageOption(String.valueOf(tier));
             if (option != null) {
                 node.machineConfig.setString(Settings.VOLTAGE.key(), option);
             } else {
-                problems.add(node.machineName + ": unknown tier \"" + tier + "\"");
+                problem(problems, "Unknown tier \"" + tier + "\"", node.machineName);
             }
         }
         if (entry.containsKey("number")) {
@@ -263,7 +271,7 @@ public final class GtnhFlowImporter {
             final String k = String.valueOf(key);
             switch (k) {
                 case "m", "tier", "I", "O", "eut", "dur", "number" -> {}
-                default -> problems.add(node.machineName + ": key \"" + k + "\" not applied");
+                default -> problem(problems, "\"" + k + "\" not applied", node.machineName);
             }
         }
     }
@@ -345,7 +353,12 @@ public final class GtnhFlowImporter {
         if (raw instanceof final Map<?, ?> map) {
             for (final Map.Entry<?, ?> entry : map.entrySet()) {
                 final double quantity = asDouble(entry.getValue(), 0);
-                if (quantity > 0) result.put(String.valueOf(entry.getKey()), quantity);
+                // Bracketed prefixes ("[recycle] chlorine") split pools to keep gtnh-flow's
+                // weaker solver away from recycling loops; PlanNH's solver wants the real
+                // loop, so strip them and merge the quantities.
+                final String name = String.valueOf(entry.getKey())
+                    .replaceFirst("^\\[[^\\]]*\\]\\s*", "");
+                if (quantity > 0) result.merge(name, quantity, Double::sum);
             }
         }
         return result;
