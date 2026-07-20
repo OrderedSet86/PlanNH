@@ -25,11 +25,13 @@ import com.cleanroommc.modularui.utils.Platform;
 import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widget.sizer.Area;
 import com.cleanroommc.modularui.widgets.menu.Menu;
+import com.sbancuz.plannh.PlanNH;
 import com.sbancuz.plannh.data.flowchart.Edge;
 import com.sbancuz.plannh.data.flowchart.Graph;
 import com.sbancuz.plannh.data.flowchart.Group;
 import com.sbancuz.plannh.data.flowchart.Node;
 import com.sbancuz.plannh.data.flowchart.Note;
+import com.sbancuz.plannh.layout.AutoLayout;
 import com.sbancuz.plannh.nei.NodeLookupContext;
 
 import lombok.Getter;
@@ -50,8 +52,6 @@ public class CanvasWidget extends ParentWidget<CanvasWidget> implements Interact
     private static final int AUTO_PLACE_STAGGER = 20;
     private static final int HEADER_OFFSET = 24;
     private static final int PORT_HALF = 4;
-    private static final int PORT_SPACING = 18;
-    private static final int PORT_ORIGIN = 10;
     private static final int MIN_GRID_SPACING = 4;
     private static final int ARROW_SIZE = 6;
     private static final int ARROW_MIN_SIZE = 4;
@@ -151,7 +151,7 @@ public class CanvasWidget extends ParentWidget<CanvasWidget> implements Interact
         do {
             final int stagger = slot * AUTO_PLACE_STAGGER;
             x = addedFeedsOrigin ? baseX - stagger : baseX + stagger;
-            y = baseY + slot * (originH + AUTO_PLACE_GAP_Y) + (slot + 1) * (PORT_SPACING / 2);
+            y = baseY + slot * (originH + AUTO_PLACE_GAP_Y) + (slot + 1) * (PortGeometry.SPACING / 2);
             slot++;
         } while (overlapsAnyNode(x, y, originW, originH));
         added.x = x;
@@ -325,6 +325,92 @@ public class CanvasWidget extends ParentWidget<CanvasWidget> implements Interact
         child(widget);
     }
 
+    /** Pre-auto-layout node positions, so a layout can be undone with shift-click. */
+    @Nullable
+    private Map<UUID, int[]> layoutSnapshot;
+
+    public void autoLayoutNodes() {
+        if (graph.getNodes()
+            .isEmpty()) return;
+
+        final List<AutoLayout.NodeBox> boxes = new ArrayList<>();
+        int anchorX = Integer.MAX_VALUE;
+        int anchorY = Integer.MAX_VALUE;
+        for (final Node node : graph.getNodes()) {
+            final RecipeNodeWidget widget = nodeWidgets.get(node.id);
+            if (widget != null) widget.ensureRecipeHandler();
+            final int width = widget != null ? widget.getWorldWidth() : 120;
+            final int height = widget != null ? widget.getWorldHeight() : 80;
+            boxes.add(
+                new AutoLayout.NodeBox(
+                    node.id,
+                    node.machineName == null ? "" : node.machineName,
+                    width,
+                    height,
+                    node.inputs.size(),
+                    node.outputs.size()));
+            anchorX = Math.min(anchorX, node.x);
+            anchorY = Math.min(anchorY, node.y);
+        }
+
+        final List<AutoLayout.Link> links = new ArrayList<>();
+        for (final Edge edge : graph.getEdges()) {
+            links.add(
+                new AutoLayout.Link(
+                    edge.sourceNodeId,
+                    edge.sourceOutputIndex,
+                    edge.targetNodeId,
+                    edge.targetInputIndex));
+        }
+
+        final Map<UUID, int[]> positions = AutoLayout.layout(boxes, links);
+        if (positions.isEmpty()) return;
+
+        final Map<UUID, int[]> snapshot = new HashMap<>();
+        for (final Node node : graph.getNodes()) {
+            snapshot.put(node.id, new int[] { node.x, node.y });
+        }
+        layoutSnapshot = snapshot;
+
+        // Anchor the new layout's top-left where the chart's top-left used to be.
+        int layoutMinX = Integer.MAX_VALUE;
+        int layoutMinY = Integer.MAX_VALUE;
+        for (final int[] pos : positions.values()) {
+            layoutMinX = Math.min(layoutMinX, pos[0]);
+            layoutMinY = Math.min(layoutMinY, pos[1]);
+        }
+        final int offsetX = anchorX - layoutMinX;
+        final int offsetY = anchorY - layoutMinY;
+
+        for (final Node node : graph.getNodes()) {
+            final int[] pos = positions.get(node.id);
+            if (pos == null) continue;
+            node.x = pos[0] + offsetX;
+            node.y = pos[1] + offsetY;
+        }
+        applyNodePositions();
+    }
+
+    /** Restores the positions captured by the last {@link #autoLayoutNodes()} call. */
+    public void restoreLayoutSnapshot() {
+        if (layoutSnapshot == null) return;
+        for (final Node node : graph.getNodes()) {
+            final int[] pos = layoutSnapshot.get(node.id);
+            if (pos == null) continue;
+            node.x = pos[0];
+            node.y = pos[1];
+        }
+        layoutSnapshot = null;
+        applyNodePositions();
+    }
+
+    private void applyNodePositions() {
+        for (final RecipeNodeWidget widget : nodeWidgets.values()) {
+            widget.syncTransform(graph.getZoom(), graph.getPanX(), graph.getPanY());
+        }
+        recheckMembershipAndFit();
+    }
+
     @Override
     public void draw(final ModularGuiContext context, final WidgetThemeEntry<?> widgetTheme) {
         final int aw = getArea().width;
@@ -381,14 +467,14 @@ public class CanvasWidget extends ParentWidget<CanvasWidget> implements Interact
     }
 
     private int portY(final int index) {
-        return Math.round(((index + 1) * PORT_SPACING + PORT_ORIGIN) * graph.getZoom());
+        return Math.round(PortGeometry.portY(index) * graph.getZoom());
     }
 
     /**
      * World-space (un-zoomed) Y of a port relative to the node's top-left corner.
      */
     private static int portWorldY(final int index) {
-        return (index + 1) * PORT_SPACING + PORT_ORIGIN;
+        return PortGeometry.portY(index);
     }
 
     private int worldWidth(final RecipeNodeWidget w) {
@@ -456,6 +542,66 @@ public class CanvasWidget extends ParentWidget<CanvasWidget> implements Interact
         }
 
         edgeRoutes.putAll(ARROW_ROUTER.route(obstacles, requests));
+
+        // The routing input replays headlessly (ArrowRouter is Minecraft-free); dump it at
+        // DEBUG on every recompute so any bad-looking route can be rebuilt from the dev log.
+        // TODO: gate routing diagnostics behind a debug flag for the 1.0 cleanup.
+        if (PlanNH.LOG.isDebugEnabled()) {
+            PlanNH.LOG.debug(reproDump(obstacles, requests));
+        }
+
+        // A route several times longer than its direct distance means the router wrapped
+        // around the chart; dump the full routing input once so the case can be replayed.
+        boolean dumped = false;
+        for (final ArrowRouter.Request q : requests) {
+            final List<int[]> path = edgeRoutes.get(q.key());
+            if (path == null) continue;
+            int len = 0;
+            for (int i = 1; i < path.size(); i++) {
+                len += Math.abs(path.get(i)[0] - path.get(i - 1)[0]) + Math.abs(path.get(i)[1] - path.get(i - 1)[1]);
+            }
+            final int direct = Math.abs(q.dx() - q.sx()) + Math.abs(q.dy() - q.sy());
+            if (len <= direct * 3 + 200) continue;
+            PlanNH.LOG.warn(
+                "Arrow route wrapped: edge {} ({},{})->({},{}) len={} direct={}",
+                q.key(),
+                q.sx(),
+                q.sy(),
+                q.dx(),
+                q.dy(),
+                len,
+                direct);
+            if (!dumped) {
+                dumped = true;
+                PlanNH.LOG.warn(reproDump(obstacles, requests));
+            }
+        }
+    }
+
+    private static String reproDump(final List<ArrowRouter.Rect> obstacles, final List<ArrowRouter.Request> requests) {
+        final StringBuilder sb = new StringBuilder("Route repro: obstacles=");
+        for (final ArrowRouter.Rect r : obstacles) {
+            sb.append(r.x())
+                .append(',')
+                .append(r.y())
+                .append(',')
+                .append(r.w())
+                .append(',')
+                .append(r.h())
+                .append(';');
+        }
+        sb.append(" requests=");
+        for (final ArrowRouter.Request r : requests) {
+            sb.append(r.sx())
+                .append(',')
+                .append(r.sy())
+                .append(',')
+                .append(r.dx())
+                .append(',')
+                .append(r.dy())
+                .append(';');
+        }
+        return sb.toString();
     }
 
     private long computeRouteSignature() {
