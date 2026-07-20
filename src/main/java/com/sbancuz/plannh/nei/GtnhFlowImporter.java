@@ -178,7 +178,14 @@ public final class GtnhFlowImporter {
         for (final ICraftingHandler handler : GuiCraftingRecipe.getCraftingHandlers("item", lookup)) {
             final int nameSim = nameSimilarity(wantMachine, norm(handler.getRecipeName()));
             for (int i = 0; i < handler.numRecipes(); i++) {
-                final Node node = new Node(handler, i, 0, 0);
+                final Node node;
+                try {
+                    node = new Node(handler, i, 0, 0);
+                } catch (final Exception e) {
+                    // A malformed candidate recipe is a non-match, not an import failure.
+                    PlanNH.LOG.debug("gtnh-flow import: candidate {}#{} failed: {}", handler.getRecipeName(), i, e);
+                    continue;
+                }
                 final Map<String, Integer> inMap = mapPorts(ins, node.inputs, itemIndex, fluidIndex);
                 if (inMap == null) continue;
                 final Map<String, Integer> outMap = mapPorts(outs, node.outputs, itemIndex, fluidIndex);
