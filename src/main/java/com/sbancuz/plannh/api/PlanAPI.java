@@ -21,6 +21,7 @@ import net.minecraft.util.StatCollector;
 import com.sbancuz.plannh.data.flowchart.Graph;
 import com.sbancuz.plannh.data.flowchart.Serializer;
 import com.sbancuz.plannh.data.flowchart.SlotSet;
+import com.sbancuz.plannh.nei.GtnhFlowImporter;
 
 import codechicken.nei.NEIClientConfig;
 import codechicken.nei.NEIClientUtils;
@@ -74,7 +75,8 @@ public final class PlanAPI {
     }
 
     /**
-     * Reads graph data from the system clipboard and deserialises it.
+     * Reads graph data from the system clipboard and deserialises it. Falls back to the
+     * gtnh-flow YAML importer when the clipboard is not an encoded PlanNH graph.
      *
      * @return the deserialised graph, or {@code null} if clipboard is empty
      *         or the data is invalid.
@@ -86,7 +88,7 @@ public final class PlanAPI {
         try {
             return Serializer.decode(data);
         } catch (final Exception e) {
-            return null;
+            return GtnhFlowImporter.tryImport(data);
         }
     }
 

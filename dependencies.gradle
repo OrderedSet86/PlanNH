@@ -59,6 +59,9 @@ dependencies {
     // ILP solver
     implementation('org.ojalgo:ojalgo:47.3.1')
 
+    // gtnh-flow YAML import (also used by the test harness fixtures)
+    implementation('org.yaml:snakeyaml:2.2')
+
     // Opt-in GTNH pack recipes for the dev client: `./gradlew runClient -PgtnhRecipes`.
     // Loads the GTNH coremod (dreamcraft) so NEI shows the pack's recipe tweaks in dev.
     if (project.hasProperty('gtnhRecipes')) {
@@ -74,5 +77,4 @@ dependencies {
     // Headless test harness (corpus charts are gtnh-flow style YAML)
     testImplementation('org.junit.jupiter:junit-jupiter:5.10.2')
     testRuntimeOnly('org.junit.platform:junit-platform-launcher:1.10.2')
-    testImplementation('org.yaml:snakeyaml:2.2')
 }
