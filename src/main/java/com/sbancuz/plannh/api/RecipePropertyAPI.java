@@ -56,8 +56,8 @@ public final class RecipePropertyAPI {
         .<FluidStack>builder("fluid", new FluidStack(FluidRegistry.WATER, 0, null))
         .displayFormatter(FluidStack::getLocalizedName)
         .amountFormatter(amount -> {
-            final int mB = Math.round(amount);
-            return mB >= 1000 ? String.format("%.1fB", mB / 1000f) : mB + "mB";
+            if (amount >= 1000f) return String.format("%.1fB", amount / 1000f);
+            return trimTrailingZeros(String.format("%.2f", amount)) + "mB";
         })
         .amountExtractor(fs -> fs.amount)
         .amountUpdater((fs, newAmount) -> fs.amount = newAmount)
@@ -83,6 +83,12 @@ public final class RecipePropertyAPI {
         .pinOutputColor(PlannhColors.PIN_FLUID_OUT.getColor())
         .arrowColor(PlannhColors.ARROW_FLUID.getColor())
         .build();
+
+    private static String trimTrailingZeros(final String s) {
+        return s.indexOf('.') < 0 && s.indexOf(',') < 0 ? s
+            : s.replaceAll("0+$", "")
+                .replaceAll("[.,]$", "");
+    }
 
     private static boolean itemsMatch(final ItemStack a, final ItemStack b) {
         if (a.getItem() == null || b.getItem() == null) return false;
