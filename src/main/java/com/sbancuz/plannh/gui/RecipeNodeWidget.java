@@ -530,7 +530,9 @@ public class RecipeNodeWidget extends Widget<RecipeNodeWidget> implements Intera
         if (rate >= 1000000) return String.format("%.1fM", rate / 1000000);
         if (rate >= 1000) return String.format("%.0f", rate);
         if (rate >= 1) return String.format("%.2f", rate);
-        return String.format("%.3f", rate);
+        // Five decimals: fractional machine counts routinely produce trickle rates that
+        // three digits would round to an all-zero row.
+        return GuiHelper.trimTrailingZeros(String.format("%.5f", rate));
     }
 
     @Override

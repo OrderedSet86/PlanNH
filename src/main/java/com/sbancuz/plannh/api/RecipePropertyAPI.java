@@ -20,6 +20,7 @@ import com.sbancuz.plannh.data.PropertyProvider;
 import com.sbancuz.plannh.data.RecipeProperty;
 import com.sbancuz.plannh.data.RecipeResource;
 import com.sbancuz.plannh.data.provider.gregtech.GTHooks;
+import com.sbancuz.plannh.gui.GuiHelper;
 import com.sbancuz.plannh.gui.IngredientColors;
 import com.sbancuz.plannh.gui.PlannhColors;
 
@@ -37,7 +38,9 @@ public final class RecipePropertyAPI {
             if (rate >= 1000000f) return String.format("%.1fM", rate / 1000000f);
             if (rate >= 1000f) return String.format("%.0f", rate);
             if (rate >= 1f) return String.format("%.2f", rate);
-            return String.format("%.3f", rate);
+            // Five decimals: fractional machine counts routinely produce trickle rates that
+            // two or three digits would round to an all-zero line.
+            return GuiHelper.trimTrailingZeros(String.format("%.5f", rate));
         })
         .amountExtractor(stack -> stack.stackSize)
         .amountUpdater((stack, newAmount) -> stack.stackSize = newAmount)
@@ -57,7 +60,8 @@ public final class RecipePropertyAPI {
         .displayFormatter(FluidStack::getLocalizedName)
         .amountFormatter(amount -> {
             if (amount >= 1000f) return String.format("%.1fB", amount / 1000f);
-            return trimTrailingZeros(String.format("%.2f", amount)) + "mB";
+            if (amount >= 1f) return GuiHelper.trimTrailingZeros(String.format("%.2f", amount)) + "mB";
+            return GuiHelper.trimTrailingZeros(String.format("%.5f", amount)) + "mB";
         })
         .amountExtractor(fs -> fs.amount)
         .amountUpdater((fs, newAmount) -> fs.amount = newAmount)
@@ -83,12 +87,6 @@ public final class RecipePropertyAPI {
         .pinOutputColor(PlannhColors.PIN_FLUID_OUT.getColor())
         .arrowColor(PlannhColors.ARROW_FLUID.getColor())
         .build();
-
-    private static String trimTrailingZeros(final String s) {
-        return s.indexOf('.') < 0 && s.indexOf(',') < 0 ? s
-            : s.replaceAll("0+$", "")
-                .replaceAll("[.,]$", "");
-    }
 
     private static boolean itemsMatch(final ItemStack a, final ItemStack b) {
         if (a.getItem() == null || b.getItem() == null) return false;

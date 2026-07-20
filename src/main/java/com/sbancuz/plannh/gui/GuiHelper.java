@@ -24,6 +24,12 @@ public final class GuiHelper {
         return String.format("%.2f", count);
     }
 
+    public static String trimTrailingZeros(final String s) {
+        return s.indexOf('.') < 0 && s.indexOf(',') < 0 ? s
+            : s.replaceAll("0+$", "")
+                .replaceAll("[.,]$", "");
+    }
+
     public static void drawRectBorder(final int x, final int y, final int w, final int h, final int bw,
         final int color) {
         GuiDraw.drawRect(x, y, w, bw, color);
