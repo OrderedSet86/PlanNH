@@ -1,7 +1,13 @@
 package com.sbancuz.plannh.annotation;
 
 import java.lang.reflect.Field;
-import java.util.Set;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.function.Predicate;
+
+import javax.annotation.Nullable;
 
 import com.sbancuz.plannh.PlanNH;
 
@@ -9,118 +15,235 @@ import cpw.mods.fml.common.Loader;
 import cpw.mods.fml.common.ModContainer;
 import cpw.mods.fml.common.discovery.ASMDataTable;
 import cpw.mods.fml.common.versioning.DefaultArtifactVersion;
-import sun.misc.Unsafe;
 
-public class VersionedInjector {
+/**
+ * Copies the dependency's own numbers over PlanNH's fallbacks at preInit. See {@link Versioned} for
+ * what the annotations mean and what a mirror field has to look like.
+ *
+ * <p>
+ * Everything here fails soft and says so. A mod that is absent, a class that moved, a field that was
+ * renamed - each leaves the fallback in place, because a planner quoting a slightly stale number is
+ * worth more than one that will not load. The one thing it will not do is fail quietly: a lookup that
+ * misses on a mod new enough to have had the field is logged, since that is drift rather than an old
+ * pack.
+ */
+public final class VersionedInjector {
 
-    public static void injectAll(ASMDataTable asmData) {
-        Set<ASMDataTable.ASMData> mods = asmData.getAll(Versioned.Mod.class.getName());
-        for (ASMDataTable.ASMData data : mods) {
+    private VersionedInjector() {}
+
+    public static void injectAll(final ASMDataTable asmData) {
+        injectAll(asmData, VersionedInjector::modPresent);
+    }
+
+    /**
+     * As above, against a stated idea of which mods are installed.
+     *
+     * <p>
+     * Package-private for the test that covers the skip: outside a running game there is no Forge to
+     * ask, so {@link #modPresent} answers "yes" to everything and the branch that matters here -
+     * leaving an absent mod's provider unloaded - is unreachable any other way.
+     */
+    static void injectAll(final ASMDataTable asmData, final Predicate<String> installed) {
+        for (final ASMDataTable.ASMData data : asmData.getAll(Versioned.Mod.class.getName())) {
+            // The mod id is read out of the ASM table rather than off the loaded class, because
+            // loading a provider is exactly what has to be avoided when its mod is missing: the class
+            // names the mod's types throughout, and resolving them is what would fail.
+            final Object declaredModId = data.getAnnotationInfo()
+                .get("modId");
+            if (declaredModId != null && !installed.test(declaredModId.toString())) continue;
+
             try {
-                Class<?> modClass = Class.forName(data.getClassName());
-                Versioned.Mod modAnn = modClass.getAnnotation(Versioned.Mod.class);
-                if (modAnn != null) {
-                    processModClass(modClass, modAnn.modId(), modAnn.sinceVersion());
-                }
-            } catch (ReflectiveOperationException e) {
-                PlanNH.LOG.error("Failed to process @Versioned.Mod on {}", data.getClassName(), e);
+                inject(Class.forName(data.getClassName()));
+            } catch (final ReflectiveOperationException | LinkageError e) {
+                PlanNH.LOG.error("PlanNH: cannot read versioned constants from {}", data.getClassName(), e);
             }
         }
     }
 
-    private static void processModClass(Class<?> modClass, String modId, String sinceVersion) {
-        for (Class<?> inner : modClass.getDeclaredClasses()) {
-            Versioned.Class classAnn = inner.getAnnotation(Versioned.Class.class);
-            if (classAnn == null) continue;
+    /**
+     * Fills in every mirror on one holder. Separate from the ASM sweep so it can be driven directly,
+     * which is the only way to check the mechanism without a mod installed to check it against.
+     */
+    public static void inject(final Class<?> holder) {
+        final Versioned.Mod mod = holder.getAnnotation(Versioned.Mod.class);
+        if (mod == null) return;
 
-            String resolvedModId = classAnn.modId()
-                .isEmpty() ? modId : classAnn.modId();
-            String resolvedSince = classAnn.sinceVersion()
-                .isEmpty() ? sinceVersion : classAnn.sinceVersion();
-            Class<?> target = resolveTargetClass(classAnn, inner, resolvedModId);
-            if (target == null) continue;
+        for (final Class<?> mirror : holder.getDeclaredClasses()) {
+            final Versioned.Class declared = mirror.getAnnotation(Versioned.Class.class);
+            if (declared == null) continue;
 
-            for (Field field : inner.getDeclaredFields()) {
-                Versioned.Constant constAnn = field.getAnnotation(Versioned.Constant.class);
-                String fieldName = (constAnn != null && !constAnn.value()
-                    .isEmpty()) ? constAnn.value() : field.getName();
-                String fieldSince = (constAnn != null && !constAnn.sinceVersion()
-                    .isEmpty()) ? constAnn.sinceVersion() : resolvedSince;
-                injectField(field, target, resolvedModId, fieldSince, fieldName);
+            final String modId = declared.modId()
+                .isEmpty() ? mod.modId() : declared.modId();
+            final String since = declared.sinceVersion()
+                .isEmpty() ? mod.sinceVersion() : declared.sinceVersion();
+
+            final Class<?> source = resolveSource(declared);
+            if (source == null) {
+                // Not "the mod is old": the class is named in full, so failing to find it means the
+                // dependency moved it, and every field under this mirror is now a guess.
+                warnIfNewEnough(modId, since, () -> "class " + named(declared) + " is gone");
+                continue;
+            }
+
+            for (final Field target : mirror.getDeclaredFields()) {
+                injectField(target, source, modId, since);
             }
         }
     }
 
-    private static Class<?> resolveTargetClass(Versioned.Class ann, Class<?> inner, String modId) {
-        if (ann.clazz() != void.class) return ann.clazz();
+    private static void injectField(final Field target, final Class<?> source, final String modId,
+        final String mirrorSince) {
+        if (target.isSynthetic()) return;
+        if (!Modifier.isStatic(target.getModifiers())) return;
 
-        String className = !ann.value()
-            .isEmpty() ? ann.value() : inner.getSimpleName();
+        // A final mirror is the failure this class was rewritten to stop. javac folds a constant
+        // variable into its use sites, so the write below would land somewhere nothing reads.
+        if (Modifier.isFinal(target.getModifiers())) {
+            PlanNH.LOG.error(
+                "PlanNH: {}.{} is final, so its value is compiled into every use site and cannot be "
+                    + "read from {}. Drop the final.",
+                target.getDeclaringClass()
+                    .getSimpleName(),
+                target.getName(),
+                modId);
+            return;
+        }
 
-        try {
-            return Class.forName(className);
-        } catch (ClassNotFoundException ignored) {}
+        final List<Candidate> candidates = candidatesFor(target, mirrorSince);
+        for (final Candidate candidate : candidates) {
+            final Object value = read(source, candidate.name());
+            if (value == null) continue;
 
-        return null;
-    }
-
-    private static Unsafe UNSAFE;
-
-    private static Unsafe unsafe() {
-        if (UNSAFE == null) {
             try {
-                Field f = Unsafe.class.getDeclaredField("theUnsafe");
-                f.setAccessible(true);
-                UNSAFE = (Unsafe) f.get(null);
-            } catch (ReflectiveOperationException e) {
-                throw new RuntimeException(e);
+                target.setAccessible(true);
+                target.set(null, value);
+                return;
+            } catch (final ReflectiveOperationException | IllegalArgumentException e) {
+                PlanNH.LOG.error(
+                    "PlanNH: {}.{} does not accept {}.{}",
+                    target.getDeclaringClass()
+                        .getSimpleName(),
+                    target.getName(),
+                    source.getSimpleName(),
+                    candidate.name(),
+                    e);
+                return;
             }
         }
-        return UNSAFE;
+
+        // Against the earliest version any of the names was expected under: from that release onwards
+        // one of them should have resolved, so nothing resolving is drift rather than an old pack.
+        warnIfNewEnough(modId, earliest(candidates), () -> source.getName() + " has no " + describe(candidates));
     }
 
-    private static void injectField(Field field, Class<?> sourceClass, String modId, String sinceVersion,
-        String fieldName) {
+    /** One name the dependency might know a constant by, and the release it was expected from. */
+    private record Candidate(String name, String since) {}
+
+    /**
+     * The names to try, in declaration order, which the annotation asks to be newest-first. A field
+     * with no {@code @Constant} mirrors the name it already has - the common case, and why the
+     * annotation is optional.
+     */
+    private static List<Candidate> candidatesFor(final Field target, final String mirrorSince) {
+        final Versioned.Constant[] declared = target.getAnnotationsByType(Versioned.Constant.class);
+        if (declared.length == 0) return List.of(new Candidate(target.getName(), mirrorSince));
+
+        final List<Candidate> candidates = new ArrayList<>();
+        for (final Versioned.Constant constant : declared) {
+            candidates.add(
+                new Candidate(
+                    constant.value()
+                        .isEmpty() ? target.getName() : constant.value(),
+                    constant.sinceVersion()
+                        .isEmpty() ? mirrorSince : constant.sinceVersion()));
+        }
+        return candidates;
+    }
+
+    private static String earliest(final List<Candidate> candidates) {
+        return candidates.stream()
+            .map(Candidate::since)
+            .min(Comparator.comparing(DefaultArtifactVersion::new))
+            .orElseThrow();
+    }
+
+    private static String describe(final List<Candidate> candidates) {
+        if (candidates.size() == 1) return "field " + candidates.getFirst()
+            .name();
+        return "field named any of " + candidates.stream()
+            .map(Candidate::name)
+            .toList();
+    }
+
+    /** The dependency's value, or null when it has no such static field to read. */
+    @Nullable
+    private static Object read(final Class<?> source, final String name) {
         try {
-            Field sourceField = sourceClass.getDeclaredField(fieldName);
-            Object value = sourceField.get(null);
-            Class<?> type = field.getType();
-            long offset = unsafe().staticFieldOffset(field);
-            if (type == int.class) {
-                unsafe().putInt(field.getDeclaringClass(), offset, (int) value);
-            } else if (type == long.class) {
-                unsafe().putLong(field.getDeclaringClass(), offset, (long) value);
-            } else if (type == double.class) {
-                unsafe().putDouble(field.getDeclaringClass(), offset, (double) value);
-            } else if (type == float.class) {
-                unsafe().putFloat(field.getDeclaringClass(), offset, (float) value);
-            } else if (type == boolean.class) {
-                unsafe().putBoolean(field.getDeclaringClass(), offset, (boolean) value);
-            } else {
-                unsafe().putObject(field.getDeclaringClass(), offset, value);
-            }
-        } catch (ReflectiveOperationException | LinkageError e) {
-            warnIfUnexpected(sourceClass, modId, sinceVersion, fieldName);
+            final Field field = source.getDeclaredField(name);
+            if (!Modifier.isStatic(field.getModifiers())) return null;
+            field.setAccessible(true);
+            return field.get(null);
+        } catch (final ReflectiveOperationException | RuntimeException | LinkageError absent) {
+            return null;
         }
     }
 
-    private static void warnIfUnexpected(Class<?> sourceClass, String modId, String sinceVersion, String fieldName) {
-        ModContainer container = Loader.instance()
-            .getIndexedModList()
-            .get(modId);
+    @Nullable
+    private static Class<?> resolveSource(final Versioned.Class declared) {
+        if (declared.clazz() != void.class) return declared.clazz();
+        if (declared.value()
+            .isEmpty()) {
+            PlanNH.LOG.error("PlanNH: @Versioned.Class needs the dependency class named in full");
+            return null;
+        }
+        try {
+            return Class.forName(declared.value());
+        } catch (final ClassNotFoundException | LinkageError absent) {
+            return null;
+        }
+    }
+
+    private static String named(final Versioned.Class declared) {
+        return declared.clazz() != void.class ? declared.clazz()
+            .getName() : declared.value();
+    }
+
+    /**
+     * Reports a miss only against a mod new enough to have had what was looked for. On an older one
+     * the fallback is the right answer and saying so every launch would train people to ignore it.
+     */
+    private static void warnIfNewEnough(final String modId, final String sinceVersion,
+        final java.util.function.Supplier<String> what) {
+        final ModContainer container = installed(modId);
         if (container == null) return;
 
-        DefaultArtifactVersion current = new DefaultArtifactVersion(container.getVersion());
-        DefaultArtifactVersion since = new DefaultArtifactVersion(sinceVersion);
+        if (new DefaultArtifactVersion(container.getVersion()).compareTo(new DefaultArtifactVersion(sinceVersion)) < 0)
+            return;
 
-        if (current.compareTo(since) >= 0) {
-            PlanNH.LOG.warn(
-                "Versioned field {}.{} missing on {} {} (expected present since {}) \u2014 falling back to hardcoded default",
-                sourceClass.getName(),
-                fieldName,
-                modId,
-                container.getVersion(),
-                sinceVersion);
+        PlanNH.LOG.warn(
+            "PlanNH: {} {} - {}. Falling back to the value PlanNH was written against, which may be stale.",
+            modId,
+            container.getVersion(),
+            what.get());
+    }
+
+    /** Null when the mod is absent, or when there is no Forge to ask - a test driving this directly. */
+    @Nullable
+    private static ModContainer installed(final String modId) {
+        try {
+            return Loader.instance()
+                .getIndexedModList()
+                .get(modId);
+        } catch (final RuntimeException | LinkageError outsideForge) {
+            return null;
+        }
+    }
+
+    private static boolean modPresent(final String modId) {
+        try {
+            return Loader.isModLoaded(modId);
+        } catch (final RuntimeException | LinkageError outsideForge) {
+            return true;
         }
     }
 }

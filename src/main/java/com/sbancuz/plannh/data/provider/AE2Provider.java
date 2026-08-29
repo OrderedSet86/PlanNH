@@ -31,20 +31,24 @@ import codechicken.nei.recipe.IRecipeHandler;
 @Versioned.Mod(modId = Compat.IDs.AE2, sinceVersion = "rv3-beta-1017-GTNH")
 public final class AE2Provider implements PropertyProvider {
 
-    @Versioned.Class
+    /**
+     * Values read off AE2 at startup; what is written here is only what to use when AE2 is absent or
+     * predates the field. Not final, deliberately - see {@link Versioned}.
+     */
+    @Versioned.Class("appeng.tile.misc.TileInscriber")
     public static class TileInscriber {
 
-        public static final int MAX_PROCESSING_TIME = 100;
-        public static final int BASE_POWER_PER_TICK = 10;
-        public static final int BASE_SPEED = 1;
+        public static int MAX_PROCESSING_TIME = 100;
+        public static int BASE_POWER_PER_TICK = 10;
+        public static int BASE_SPEED = 1;
     }
 
-    @Versioned.Class
+    @Versioned.Class("appeng.tile.crafting.TileMolecularAssembler")
     public static class TileMolecularAssembler {
 
-        public static final int MAX_PROCESSING_TIME = 100;
-        public static final int[] SPEED = { 10, 13, 17, 20, 25, 50 };
-        public static final double[] ACCELERATION_TAX = { 1.0, 1.3, 1.7, 2.0, 2.5, 5.0 };
+        public static int MAX_PROCESSING_TIME = 100;
+        public static int[] SPEED = { 10, 13, 17, 20, 25, 50 };
+        public static double[] ACCELERATION_TAX = { 1.0, 1.3, 1.7, 2.0, 2.5, 5.0 };
     }
 
     @Override
